@@ -1,0 +1,60 @@
+name: 'Build JAR and Docker Image'
+description: 'Build JAR and Docker Image'
+inputs:
+  container-name:
+    description: 'Docker Container Name'
+    required: true
+  project-name:
+    description: 'Project Name'
+    required: true
+outputs:
+  image-url:
+    description: "Docker Image URL"
+    value: ${{ steps.build-image.outputs.image-url }}
+runs:
+  using: "composite"
+  steps:
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@62f4f872db3836360b72999f4b87f1ff13310f3a
+
+    - name: Install clojure tools
+      uses: DeLaGuardo/setup-clojure@12.3
+      with:
+        cli: 1.11.1.1435
+
+    - name: Restore Maven Dependencies
+      uses: actions/cache/restore@v3
+      id: restore-cache
+      with:
+        path: |
+          ~/.m2/repository
+          ~/.gitlibs
+          ~/.deps.clj
+        key: ${{ inputs.project-name }}-${{ runner.os }}-${{ hashFiles('**/deps.edn') }}
+        restore-keys: ${{ inputs.project-name }}-
+
+    - name: Build JAR file
+      working-directory: projects/${{ inputs.project-name }}
+      shell: bash
+      run: clojure -T:build uber
+
+    - name: Store Clojure Dependencies
+      uses: actions/cache/save@v3
+      id: save-cache
+      with:
+        path: |
+          ~/.m2/repository
+          ~/.gitlibs
+          ~/.deps.clj
+        key: ${{ inputs.project-name }}-${{ runner.os }}-${{ hashFiles('**/deps.edn') }}
+
+    - name: Build, tag, and push image to Amazon ECR
+      id: build-image
+      env:
+        FULL_TAG: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.container-name }}:${{ github.sha }}
+      shell: bash
+      run: |
+        docker build -f projects/${{ inputs.project-name }}/Dockerfile -t $FULL_TAG .
+        docker push $FULL_TAG
+        echo "image-url=$FULL_TAG" >> $GITHUB_OUTPUT
